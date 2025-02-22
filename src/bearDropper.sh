@@ -1,8 +1,8 @@
 #!/bin/ash
 # shellcheck disable=SC2187,SC2086,SC2154,SC2155
 #
-# bearDropper - dropbear log parsing ban agent for OpenWRT 22.03 (rewrite of bearDropper 11/2015)
-#   https://github.com/marjancinober/bearDropper  -- Marjan Cinober 05/2023
+# bearDropper - dropbear log parsing ban agent for OpenWRT 23.05.5 ( nft & ipv6 rewrite of bearDropper 11/2015 )
+#   https://github.com/marjancinober/bearDropper  -- Marjan Cinober 05/2023, 02/2023
 #   http://github.com/robzr/bearDropper  -- Rob Zwissler 11/2015
 # GNU AFFERO GENERAL PUBLIC LICENSE Version 3 # https://www.gnu.org/licenses/agpl-3.0.html
 # 
@@ -110,9 +110,12 @@ getLogTime () {
 # extra validation, fails safe. Args: $1=log line
 getLogIP () { 
   local logLine="$1"
-  local ebaPID=$(echo "$logLine" | sed -n 's/^.*authpriv.info \(dropbear\[[0-9]*\]:\) Exit before auth.*/\1/p')
+  local ebaPID=$(echo "$logLine" | sed -n 's/^.*authpriv.warn \(dropbear\[[0-9]*\]:\) Login attempt for nonexistent user.*/\1/p')
   [ -n "$ebaPID" ] && logLine=$($cmdLogreadEba | grep -F "${ebaPID} Child connection from ")
-  echo "$logLine" | sed -n 's/^.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p'
+  echo "$logLine" | sed -n \
+    -e 's/[<>]//g;s/: Exited.*//;s/: [^:]*$//' \
+    -e 's/^.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p' \
+    -e 's/^.*[^0-9a-f]\([0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*\):.*/\1/p'
 }
 
 # Args: $1=IP
@@ -148,7 +151,7 @@ banIP () {
   done
   if ! nft list chain inet fw4 $firewallChain | grep -q "saddr $ip .*$firewallTarget" 2>/dev/null ; then
     logLine 1 "Inserting ban rule for IP $ip into nft chain $firewallChain"
-    nft add rule inet fw4 $firewallChain ip saddr $ip "$firewallTarget"
+    nft add rule inet fw4 $firewallChain ip"$([ "${ip#*:}" = "$ip" ] || echo 6)" saddr $ip "$firewallTarget"
   else
     logLine 3 "banIP() rule for $ip already present in nft chain"
   fi
@@ -284,7 +287,7 @@ loadState () {
 }
 
 printUsage () {
-  cat <<-_EOF_
+  cat <<\!
 	Usage: bearDropper [-m mode] [-a #] [-b #] [-c ...] [-C ...] [-f ...] [-l #] [-j ...] [-p #] [-P #] [-s ...]
 
 	  Running Modes (-m) (def: $defaultMode)
@@ -310,7 +313,7 @@ printUsage () {
 	  All time strings can be specified in seconds, or using BIND style
 	  time strings, ex: 1w2d3h5m30s is 1 week, 2 days, 3 hours, etc...
 
-	_EOF_
+!
 }
 
 #  Begin main logic
@@ -370,12 +373,12 @@ if [ "$logMode" = follow ] ; then
       trap "saveState -f; exit" INT
       firstRun=0
     fi
-    sed -nEf "$fileRegex" > "$tmpFile" <<-_EOF_
+    sed -nEf "$fileRegex" > "$tmpFile" <<\!
 	$line
-	_EOF_
+!
     line="$(cat $tmpFile)"
     [ -n "$line" ] && processLogLine "$line"
-    logLine 3 "ReadComp:$readsSinceSave/$worstCaseReads"
+    logLine 4 "ReadComp:$readsSinceSave/$worstCaseReads"
     # shellcheck disable=SC3018
     if [ $((++readsSinceSave)) -ge $worstCaseReads ] ; then
       now="$(date +%s)"
@@ -386,6 +389,8 @@ if [ "$logMode" = follow ] ; then
         readsSinceSave=0
       fi
     fi
+    # _REM_ Sleep 1 s - because a BUG in above 'while read' breaks and does not wait for $followModeCheckInterval
+    sleep 1
   done
 elif [ "$logMode" = entire ] ; then 
   logLine 1 "Running in entire mode"

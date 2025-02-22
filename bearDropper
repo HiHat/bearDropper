@@ -1,7 +1,7 @@
 #!/bin/ash
 #
-# bearDropper - dropbear log parsing ban agent for OpenWRT 22.03 (rewrite of bearDropper 11/2015)
-#   https://github.com/marjancinober/bearDropper  -- Marjan Cinober 05/2023
+# bearDropper - dropbear log parsing ban agent for OpenWRT 23.05.5 ( nft & ipv6 rewrite of bearDropper 11/2015 )
+#   https://github.com/marjancinober/bearDropper  -- Marjan Cinober 05/2023, 02/2023
 #   http://github.com/robzr/bearDropper  -- Rob Zwissler 11/2015
 # GNU AFFERO GENERAL PUBLIC LICENSE Version 3 # https://www.gnu.org/licenses/agpl-3.0.html
 # 
@@ -77,23 +77,27 @@ uciLoadVar formatTodayLogDateRegex '^%a %b %e ..:..:.. %Y'	# filter for today mo
 
 # Begin functions
 #
+ip2raw () { echo "$1" | sed 's|/|m|;s/\./_/g;s/:/i/g'; }
+
+raw2ip () { echo "$1" | sed 's/=.*//;s/^bddb_//;s|m|/|;s/_/./g;s/i/:/g'; }
+
 # Clear bddb entries from environment
 bddbClear () { 
   local bddbVar
-  for bddbVar in `set | grep -E '^bddb_[0-9_]*=' | cut -f1 -d= | xargs echo -n` ; do eval unset $bddbVar ; done
+  for bddbVar in `set | grep -E '^bddb_[0-9a-f_im]*=' | cut -f1 -d= | xargs echo -n` ; do eval unset $bddbVar ; done
   bddbStateChange=1
 }
 
 # Returns count of unique IP entries in environment
-bddbCount () { set | grep -E '^bddb_[0-9_]*=' | wc -l ; }
+bddbCount () { set | grep -c '^bddb_[0-9a-f_im]*=' ; }
 
 # Loads existing bddb file into environment
 # Arg: $1 = file, $2 = type (bddb/bddbz), $3 = 
 bddbLoad () { 
-  local loadFile="$1.$2" fileType="$2"
-  if [ "$fileType" = bddb -a -f "$loadFile" ] ; then
+  local loadFile="$1.$2"
+  if [ "$2" = bddb -a -f "$loadFile" ] ; then
     . "$loadFile"
-  elif [ "$fileType" = bddbz -a -f "$loadFile" ] ; then
+  elif [ "$2" = bddbz -a -f "$loadFile" ] ; then
     local tmpFile="`mktemp`"
     zcat $loadFile > "$tmpFile"
     . "$tmpFile"
@@ -104,11 +108,11 @@ bddbLoad () {
 
 # Saves environment bddb entries to file, Arg: $1 = file to save in
 bddbSave () { 
-  local saveFile="$1.$2" fileType="$2"
-  if [ "$fileType" = bddb ] ; then
-    set | grep -E '^bddb_[0-9_]*=' | sed s/\'//g > "$saveFile"
-  elif [ "$fileType" = bddbz ] ; then
-    set | grep -E '^bddb_[0-9_]*=' | sed s/\'//g | gzip -c > "$saveFile"
+  local saveFile="$1.$2"
+  if [ "$2" = bddb ] ; then
+    set | grep '^bddb_[0-9a-f_im]*=' | sed s/\'//g > "$saveFile"
+  elif [ "$2" = bddbz ] ; then
+    set | grep -E '^bddb_[0-9a-f_im]*=' | sed s/\'//g | gzip -c > "$saveFile"
   fi
   bddbStateChange=0 
 }
@@ -116,8 +120,8 @@ bddbSave () {
 # Set bddb record status=1, update ban time flag with newest
 # Args: $1=IP Address $2=timeFlag
 bddbEnableStatus () {
-  local record=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
-  local newestTime=`bddbGetTimes $1 | sed 's/.* //' | xargs echo $2 | tr \  '\n' | sort -n | tail -1 `
+  local record=bddb_`ip2raw $1`
+  local newestTime=`bddbGetTimes $1 | sed 's/.*,//' | xargs echo $2 | tr \  '\n' | sort -n | tail -1 `
   eval $record="1,$newestTime"
   bddbStateChange=1
 }
@@ -134,37 +138,35 @@ bddbGetTimes () {
 
 # Args: $1 = IP address, $2 [$3 ...] = timestamp (seconds since epoch)
 bddbAddRecord () {
-  local ip="`echo "$1" | tr . _`" ; shift
-  local newEpochList="$@" status="`eval echo \\\$bddb_$ip | cut -f1 -d,`"
+  local ip="`ip2raw $1`" status=''
+  shift
+  [ "$1" -lt 2 ] && { status="$1"; shift; }
+  [ -z "$status" ] && status="`eval echo \\\$bddb_$ip | cut -f1 -d,`"
+  local newEpochList="$*"
   local oldEpochList="`eval echo \\\$bddb_$ip | cut -f2- -d,  | tr , \ `" 
   local epochList=`echo $oldEpochList $newEpochList | xargs -n 1 echo | sort -un | xargs echo -n | tr \  ,`
   [ -z "$status" ] && status=0
-  eval "bddb_$ip"\=\"$status,$epochList\"
+  eval "bddb_$ip"=\"$status,$epochList\"
   bddbStateChange=1
 }
 
 # Args: $1 = IP address
 bddbRemoveRecord () {
-  local ip="`echo "$1" | tr . _`"
-  eval unset bddb_$ip
+  eval unset bddb_`ip2raw $1`
   bddbStateChange=1
 }
 
 # Returns all IPs (not CIDR) present in records
 bddbGetAllIPs () { 
   local ipRaw record
-  set | grep -E '^bddb_[0-9_]*=' | tr \' \  | while read record ; do
-    ipRaw=`echo $record | cut -f1 -d= | sed 's/^bddb_//'`
-    if [ `echo $ipRaw | tr _ \  | wc -w` -eq 4 ] ; then
-      echo $ipRaw | tr _ .
-    fi
+  set | grep '^bddb_[0-9a-f_im]*=' | tr \' \  | while read record ; do
+    raw2ip "$record"
   done
 }
 
 # retrieve single IP record, Args: $1=IP
 bddbGetRecord () {
-  local record
-  record=`echo $1 | sed -e 's/\./_/g' -e 's/^/bddb_/'`
+  local record=bddb_`ip2raw $1`
   eval echo \$$record
 }
 
@@ -198,9 +200,12 @@ getLogTime () {
 # extra validation, fails safe. Args: $1=log line
 getLogIP () { 
   local logLine="$1"
-  local ebaPID=$(echo "$logLine" | sed -n 's/^.*authpriv.info \(dropbear\[[0-9]*\]:\) Exit before auth.*/\1/p')
+  local ebaPID=$(echo "$logLine" | sed -n 's/^.*authpriv.warn \(dropbear\[[0-9]*\]:\) Login attempt for nonexistent user.*/\1/p')
   [ -n "$ebaPID" ] && logLine=$($cmdLogreadEba | grep -F "${ebaPID} Child connection from ")
-  echo "$logLine" | sed -n 's/^.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p'
+  echo "$logLine" | sed -n \
+    -e 's/[<>]//g;s/: Exited.*//;s/: [^:]*$//' \
+    -e 's/^.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p' \
+    -e 's/^.*[^0-9a-f]\([0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*\):.*/\1/p'
 }
 
 # Args: $1=IP
@@ -236,7 +241,7 @@ banIP () {
   done
   if ! nft list chain inet fw4 $firewallChain | grep -q "saddr $ip .*$firewallTarget" 2>/dev/null ; then
     logLine 1 "Inserting ban rule for IP $ip into nft chain $firewallChain"
-    nft add rule inet fw4 $firewallChain ip saddr $ip "$firewallTarget"
+    nft add rule inet fw4 $firewallChain ip"$([ "${ip#*:}" = "$ip" ] || echo 6)" saddr $ip "$firewallTarget"
   else
     logLine 3 "banIP() rule for $ip already present in nft chain"
   fi
@@ -369,7 +374,7 @@ loadState () {
 }
 
 printUsage () {
-  cat <<-_EOF_
+  cat <<\!
 	Usage: bearDropper [-m mode] [-a #] [-b #] [-c ...] [-C ...] [-f ...] [-l #] [-j ...] [-p #] [-P #] [-s ...]
 
 	  Running Modes (-m) (def: $defaultMode)
@@ -395,7 +400,7 @@ printUsage () {
 	  All time strings can be specified in seconds, or using BIND style
 	  time strings, ex: 1w2d3h5m30s is 1 week, 2 days, 3 hours, etc...
 
-	_EOF_
+!
 }
 
 #  Begin main logic
@@ -453,12 +458,12 @@ if [ "$logMode" = follow ] ; then
       trap "saveState -f; exit" INT
       firstRun=0
     fi
-    sed -nEf "$fileRegex" > "$tmpFile" <<-_EOF_
+    sed -nEf "$fileRegex" > "$tmpFile" <<\!
 	$line
-	_EOF_
+!
     line="$(cat $tmpFile)"
     [ -n "$line" ] && processLogLine "$line"
-    logLine 3 "ReadComp:$readsSinceSave/$worstCaseReads"
+    logLine 4 "ReadComp:$readsSinceSave/$worstCaseReads"
     if [ $((++readsSinceSave)) -ge $worstCaseReads ] ; then
       now="$(date +%s)"
       if [ $((now - lastCheckAll)) -ge $followModeCheckInterval ] ; then
@@ -468,6 +473,7 @@ if [ "$logMode" = follow ] ; then
         readsSinceSave=0
       fi
     fi
+    sleep 1
   done
 elif [ "$logMode" = entire ] ; then 
   logLine 1 "Running in entire mode"

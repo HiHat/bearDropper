@@ -9,7 +9,7 @@ config bearDropper
   	option	defaultMode 		entire
 
   # failure attempts from a given IP required to trigger a ban
-  	option	attemptCount 		10
+  	option	attemptCount 		5
 
   # time period during which attemptCount must be exceeded in order to trigger a ban
   	option	attemptPeriod 		12h
@@ -17,8 +17,8 @@ config bearDropper
   # how long a ban exist once the attempt threshold is exceeded
   	option 	banLength 		1w
 
-  # log level, 0=silent 1=default 2=verbose 3=debug
-  	option 	logLevel 		1
+  # log level, 0=silent 1=default 2=verbose 3=debug 4=bughunt
+  	option 	logLevel 		2
 
   # logger facility/priority - use stdout or stderr to bypass logger (syslog)
   	option	logFacility 		authpriv.notice
@@ -53,7 +53,7 @@ config bearDropper
     list	logRegex 's/[`$"'\\\'']//g'			# strip escape chars
     list	logRegex '/has invalid shell, rejected$/d'	# delete (/d) - use to filter out
     # print (/p) - use to filter in 
-    list	logRegex '/^[A-Za-z ]+[0-9: ]+authpriv.warn dropbear\[.+([0-9]+\.){3}[0-9]+/p'
+    list	logRegex '/^[A-Za-z ]+[0-9: ]+authpriv.warn dropbear\[.+/p'
     list	logRegex '/^[A-Za-z ]+[0-9: ]+authpriv.info dropbear\[.+:\ Exit before auth.*/p'
 
   # whitelist entries do not work yet; as a temporary workaround, put in a firewall rule upstream

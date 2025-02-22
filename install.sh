@@ -20,15 +20,16 @@ echo -e 'Starting background process'
 
 dropbear_count=$(uci show dropbear | grep -c =dropbear)
 dropbear_count=$((dropbear_count - 1))
+dropbear_conf_updated=
 for instance in $(seq 0 $dropbear_count); do
   dropbear_verbose=$(uci -q get dropbear.@dropbear[$instance].verbose || echo 0)
   if [ $dropbear_verbose -eq 0 ]; then
     uci set dropbear.@dropbear[$instance].verbose=1 
-    dropbear_conf_updated=1
+    echo "dropbear.@dropbear[$instance].verbose=1 logging was configured, restart..."
+    dropbear_conf_updated=yes
   fi
 done
-if [ $dropbear_conf_updated ]; then
-  uci commit
-  /etc/init.d/dropbear restart
-  echo "Verbose logging was configured and dropbear service restarted to enable this change."
-fi
+[ $dropbear_conf_updated ] && {
+    uci commit
+    /etc/init.d/bearDropper restart
+}
