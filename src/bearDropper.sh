@@ -110,10 +110,9 @@ getLogTime () {
 # extra validation, fails safe. Args: $1=log line
 getLogIP () { 
   local logLine="$1"
-  local ebaPID=$(echo "$logLine" | sed -n 's/^.*authpriv.warn \(dropbear\[[0-9]*\]:\) Login attempt for nonexistent user.*/\1/p')
+  local ebaPID=$(echo "$logLine" | sed -n 's/^.*authpriv.info \(dropbear\[[0-9]*\]:\) Exit before auth.*/\1/p')
   [ -n "$ebaPID" ] && logLine=$($cmdLogreadEba | grep -F "${ebaPID} Child connection from ")
   echo "$logLine" | sed -n \
-    -e 's/[<>]//g;s/: Exited.*//;s/: [^:]*$//' \
     -e 's/^.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*$/\1/p' \
     -e 's/^.*[^0-9a-f]\([0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*:[0-9a-f]*\):.*/\1/p'
 }
