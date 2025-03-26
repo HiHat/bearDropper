@@ -360,10 +360,10 @@ bddbCheckStatusAll
 # main event loops
 if [ "$logMode" = follow ] ; then 
   logLine 1 "Running in follow mode"
-  readsSinceSave=0 lastCheckAll=0 worstCaseReads=1 tmpFile="/tmp/bearDropper.$$.1"
+  readsSinceSave=0 lastCheckAll=0 worstCaseReads=1
 # Verify if these do any good - try saving to a temp.  Scope may make saveState useless.
   # shellcheck disable=SC2064
-  trap "rm -f '$tmpFile' '$fileRegex' ; exit " INT
+  trap "rm -f '$fileRegex' ; exit " INT
   [ $persistentStateWritePeriod -gt 1 ] && worstCaseReads=$((persistentStateWritePeriod / followModeCheckInterval))
   firstRun=1
   # shellcheck disable=SC3045
@@ -373,10 +373,7 @@ if [ "$logMode" = follow ] ; then
       trap "saveState -f; exit" INT
       firstRun=0
     fi
-    sed -nEf "$fileRegex" > "$tmpFile" <<\!
-	$line
-!
-    line="$(cat $tmpFile)"
+    line=$(echo "$line" | sed -nEf "$fileRegex")                 
     [ -n "$line" ] && processLogLine "$line"
     logLine 4 "ReadComp:$readsSinceSave/$worstCaseReads"
     # shellcheck disable=SC3018
